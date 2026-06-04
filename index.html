@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>教會活動報到系統</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f4f7f6;
+            color: #333;
+            line-height: 1.6;
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+        }
+        .group-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .group {
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            padding: 15px;
+            background-color: #fcfcfc;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+        }
+        .group h2 {
+            font-size: 1.5em;
+            color: #34495e;
+            margin-top: 0;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 5px;
+            margin-bottom: 15px;
+        }
+        .member {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px dashed #eee;
+        }
+        .member:last-child {
+            border-bottom: none;
+        }
+        .member-name {
+            flex-grow: 1;
+            font-size: 1.1em;
+            margin-right: 10px;
+        }
+        .check-in-button {
+            padding: 8px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: background-color 0.2s ease, transform 0.1s ease;
+            white-space: nowrap; /* Prevent button text from wrapping */
+        }
+        .check-in-button:hover {
+            transform: translateY(-1px);
+        }
+        .checked-in {
+            background-color: #28a745; /* Green */
+            color: white;
+        }
+        .checked-in:hover {
+            background-color: #218838;
+        }
+        .not-checked-in {
+            background-color: #dc3545; /* Red */
+            color: white;
+        }
+        .not-checked-in:hover {
+            background-color: #c82333;
+        }
+        .search-container {
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        .search-input {
+            width: 80%;
+            max-width: 400px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 1em;
+        }
+        .total-stats {
+            text-align: center;
+            margin-top: 30px;
+            padding: 15px;
+            background-color: #e9ecef;
+            border-radius: 8px;
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #495057;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>教會一樓報到處</h1>
+
+        <div class="search-container">
+            <input type="text" id="searchInput" class="search-input" placeholder="搜尋成員姓名...">
+        </div>
+
+        <div id="totalStats" class="total-stats">
+            總人數: <span id="totalMembers">0</span> | 已報到: <span id="checkedInCount">0</span> | 未報到: <span id="notCheckedInCount">0</span>
+        </div>
+
+        <div id="checkInArea" class="group-grid">
+            <!-- 報到組別將會在這裡動態生成 -->
+        </div>
+    </div>
+
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/9.6.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.0/firebase-database-compat.js"></script>
+    <!-- 如果您需要 Firebase Authentication 才能寫入資料庫 (推薦做法)，則需要引入此行並設定完整的 firebaseConfig -->
+    <!-- <script src="https://www.gstatic.com/firebasejs/9.6.0/firebase-auth-compat.js"></script> -->
+
+    <script>
+        // 您的 Firebase 配置對象
+        const firebaseConfig = {
+            databaseURL: "https://the-way-d0948-default-rtdb.asia-southeast1.firebasedatabase.app"
+            // 如果您計劃使用 Firebase Authentication (例如讓工作人員登入才能更新報到狀態)，
+            // 您還需要從您的 Firebase 專案設定中取得以下資訊並填入：
+            // apiKey: "YOUR_API_KEY",
+            // authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+            // projectId: "YOUR_PROJECT_ID",
+            // storageBucket: "YOUR_PROJECT_ID.appspot.com",
+            // messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+            // appId: "YOUR_APP_ID"
+        };
+
+        // 初始化 Firebase
+        firebase.initializeApp(firebaseConfig);
+        const database = firebase.database();
+        const groupsRef = database.ref('groups');
+
+        const checkInArea = document.getElementById('checkInArea');
+        const searchInput = document.getElementById('searchInput');
+        const totalMembersSpan = document.getElementById('totalMembers');
+        const checkedInCountSpan = document.getElementById('checkedInCount');
+        const notCheckedInCountSpan = document.getElementById('notCheckedInCount');
+
+        let allGroupsData = {}; // 用於儲存完整的數據，以便搜尋
+
+        // 更新統計數字
+        function updateStats(data) {
+            let total = 0;
+            let checkedIn = 0;
+            if (data) {
+                for (const groupId in data) {
+                    const group = data[groupId];
+                    if (group.members) {
+                        for (const memberId in group.members) {
+                            total++;
+                            if (group.members[memberId].checkedIn) {
+                                checkedIn++;
+                            }
+                        }
+                    }
+                }
+            }
+            totalMembersSpan.textContent = total;
+            checkedInCountSpan.textContent = checkedIn;
+            notCheckedInCountSpan.textContent = total - checkedIn;
+        }
+
+        // 渲染組別和成員的函數
+        function renderGroups(groupsToRender) {
+            checkInArea.innerHTML = ''; // 清空現有內容
+
+            if (!groupsToRender) return;
+
+            for (const groupId in groupsToRender) {
+                const groupData = groupsToRender[groupId];
+                // 如果是搜尋結果，可能只有部分組別或成員符合
+                if (!groupData || !groupData.members) continue;
+
+                const groupDiv = document.createElement('div');
+                groupDiv.className = 'group';
+                groupDiv.setAttribute('data-group-id', groupId);
+
+                groupDiv.innerHTML = `<h2>${groupData.name}</h2>`;
+                const membersContainer = document.createElement('div'); // 為了排序成員
+
+                // 將成員轉換為陣列以便排序
+                const sortedMembers = Object.keys(groupData.members).map(memberId => ({
+                    id: memberId,
+                    data: groupData.members[memberId]
+                })).sort((a, b) => a.data.name.localeCompare(b.data.name, 'zh-Hant')); // 按姓名排序
+
+                sortedMembers.forEach(member => {
+                    const memberId = member.id;
+                    const memberData = member.data;
+
+                    const memberDiv = document.createElement('div');
+                    memberDiv.className = 'member';
+                    memberDiv.setAttribute('data-member-name', memberData.name.toLowerCase());
+                    memberDiv.setAttribute('data-group-id', groupId);
+                    memberDiv.setAttribute('data-member-id', memberId);
+
+                    const buttonId = `button-${groupId}-${memberId}`; // 確保ID唯一性
+
+                    memberDiv.innerHTML = `
+                        <span class="member-name">${memberData.name}</span>
+                        <button id="${buttonId}" class="check-in-button ${memberData.checkedIn ? 'checked-in' : 'not-checked-in'}">
+                            ${memberData.checkedIn ? '已報到' : '未報到'}
+                        </button>
+                    `;
+                    membersContainer.appendChild(memberDiv);
+
+                    // 為報到按鈕添加事件監聽器
+                    // 使用 closure 來確保每次循環的 memberId 和 groupId 是正確的
+                    document.getElementById(buttonId).addEventListener('click', (function(currentGroupId, currentMemberId, currentMemberData) {
+                        return function() {
+                            const newCheckedInStatus = !currentMemberData.checkedIn;
+                            database.ref(`groups/${currentGroupId}/members/${currentMemberId}/checkedIn`).set(newCheckedInStatus)
+                                .then(() => {
+                                    console.log(`Updated ${currentMemberData.name} to checkedIn: ${newCheckedInStatus}`);
+                                })
+                                .catch(error => {
+                                    console.error("Error updating checkedIn status:", error);
+                                    alert("更新報到狀態失敗，請檢查網路或權限。");
+                                });
+                        };
+                    })(groupId, memberId, memberData));
+                });
+                groupDiv.appendChild(membersContainer);
+                checkInArea.appendChild(groupDiv);
+            }
+        }
+
+        // 監聽 Firebase 資料的變動
+        groupsRef.on('value', (snapshot) => {
+            allGroupsData = snapshot.val(); // 更新完整數據
+            const searchTerm = searchInput.value.toLowerCase();
+            if (searchTerm) {
+                filterAndRenderGroups(searchTerm); // 如果有搜尋詞，則重新過濾並渲染
+            } else {
+                renderGroups(allGroupsData); // 否則渲染所有數據
+            }
+            updateStats(allGroupsData); // 更新統計數據
+        }, (error) => {
+            console.error("Error fetching data from Firebase:", error);
+            checkInArea.innerHTML = "<p>無法載入報到資料。請確認 Firebase 資料庫連結和安全規則。</p>";
+        });
+
+        // 搜尋功能
+        searchInput.addEventListener('input', (event) => {
+            const searchTerm = event.target.value.toLowerCase();
+            filterAndRenderGroups(searchTerm);
+        });
+
+        function filterAndRenderGroups(searchTerm) {
+            if (!allGroupsData) {
+                renderGroups({});
+                return;
+            }
+
+            const filteredGroups = {};
+            for (const groupId in allGroupsData) {
+                const groupData = allGroupsData[groupId];
+                const filteredMembers = {};
+                for (const memberId in groupData.members) {
+                    const memberData = groupData.members[memberId];
+                    if (memberData.name.toLowerCase().includes(searchTerm)) {
+                        filteredMembers[memberId] = memberData;
+                    }
+                }
+                if (Object.keys(filteredMembers).length > 0) {
+                    filteredGroups[groupId] = {
+                        name: groupData.name,
+                        members: filteredMembers
+                    };
+                }
+            }
+            renderGroups(filteredGroups);
+        }
+
+    </script>
+</body>
+</html>
